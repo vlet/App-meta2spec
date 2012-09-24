@@ -1,0 +1,9 @@
+/inc
+/blib
+Makefile
+Makefile.old
+META.*
+MYMETA.*
+MANIFEST
+MANIFEST.bak
+pm_to_blib

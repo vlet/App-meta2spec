@@ -1,0 +1,237 @@
+#!/usr/bin/perl
+
+=head1 NAME
+
+App::meta2spec - extract data from META.yml/MANIFEST and prepare RPM SPEC file
+
+=head1 SYNOPSIS
+
+    $ cd Some-Perl-Module-0.01
+    $ meta2spec
+
+Run meta2spec within directory of extracted Perl module tarball to create rpm spec
+
+=head1 LICENSE
+
+Perl
+
+=head1 AUTHOR
+
+Vladimir Lettiev, E<lt>crux@cpan.orgE<gt>
+
+=head1 SEE ALSO
+
+    Maximum RPM L<http://www.rpm.org/max-rpm/s1-rpm-build-creating-spec-file.html>,
+    ALTLinux SPEC Guide L<http://www.altlinux.org/Spec>
+
+=cut
+
+package App::meta2spec;
+use strict;
+use warnings;
+use YAML qw(LoadFile);
+use POSIX qw(locale_h strftime);
+
+our $VERSION = '0.01';
+
+my $spec_tmpl = <<'EOF';
+Name: @name@
+Version: @version@
+Release: alt1
+
+Summary: @summary@
+Group: Development/Perl
+License: @license@
+
+Url: %CPAN @dist@
+Source: %name-%version.tar
+@arch@
+BuildRequires: @deps@
+
+%description
+%summary
+
+%prep
+%setup -q
+
+%build
+%perl_vendor_build
+
+%install
+%perl_vendor_install
+
+%files
+@files@
+@doc@
+
+%changelog
+* @date@ Buildbot <buildbot@altlinux.org> @version@-alt1
+- initial build for ALTLinux
+
+EOF
+
+my %perl_provides = (
+    "perl-base" => [
+        qw(perl AutoLoader B Benchmark Carp Carp::Heavy Class::Struct Config Config::Extensions Cwd Data::Dumper Digest Digest::MD5 Digest::base Digest::file DirHandle DynaLoader English Env Errno Exporter Exporter::Heavy Fcntl File::Basename File::Compare File::Copy File::DosGlob File::Find File::Glob File::Path File::Spec File::Spec::Functions File::Spec::Unix File::Temp File::stat FileCache FileHandle FindBin Getopt::Long Getopt::Std Hash::Util Hash::Util::FieldHash I18N::Langinfo IO IO::Dir IO::File IO::Handle IO::Pipe IO::Poll IO::Seekable IO::Select IO::Socket IO::Socket::INET IO::Socket::UNIX IPC::Open2 IPC::Open3 List::Util List::Util::XS MIME::Base64 MIME::QuotedPrint Net::hostent Net::netent Net::protoent Net::servent O Opcode POSIX PerlIO PerlIO::encoding PerlIO::mmap PerlIO::scalar PerlIO::via PerlIO::via::QuotedPrint Pod::Functions Safe Scalar::Util Search::Dict SelectSaver SelfLoader Socket Storable Symbol Sys::Hostname Sys::Syslog Term::Complete Text::Abbrev Text::ParseWords Text::Tabs Text::Wrap Tie::Array Tie::Handle Tie::Hash Tie::Hash::NamedCapture Tie::Memoize Tie::Scalar Tie::StdHandle Tie::SubstrHash Time::HiRes Time::Local Time::gmtime Time::localtime Time::tm UNIVERSAL User::grent User::pwent XSLoader arybase attributes autouse base bytes constant deprecate feature fields filetest if integer less lib locale mro open ops overload overload::numbers overloading re sigtrap sort strict subs utf8 vars version vmsish warnings warnings::register)
+    ],
+
+    "perl-devel" => [
+        qw(App::Prove App::Prove::State App::Prove::State::Result App::Prove::State::Result::Test AutoSplit B::Concise B::Deparse B::Showlex B::Terse B::Xref DB Devel::PPPort Devel::Peek Dumpvalue ExtUtils::Command ExtUtils::Command::MM ExtUtils::Constant ExtUtils::Constant::Base ExtUtils::Constant::ProxySubs ExtUtils::Constant::Utils ExtUtils::Constant::XS ExtUtils::Embed ExtUtils::Install ExtUtils::Installed ExtUtils::Liblist ExtUtils::Liblist::Kid ExtUtils::MM ExtUtils::MM_Any ExtUtils::MM_Unix ExtUtils::MY ExtUtils::MakeMaker ExtUtils::MakeMaker::Config ExtUtils::Manifest ExtUtils::Miniperl ExtUtils::Mkbootstrap ExtUtils::Mksymlists ExtUtils::Packlist ExtUtils::ParseXS ExtUtils::ParseXS::Constants ExtUtils::ParseXS::CountLines ExtUtils::ParseXS::Utilities ExtUtils::Typemaps ExtUtils::Typemaps::Cmd ExtUtils::Typemaps::InputMap ExtUtils::Typemaps::OutputMap ExtUtils::Typemaps::Type ExtUtils::testlib Pod::Html TAP::Base TAP::Formatter::Base TAP::Formatter::Color TAP::Formatter::Console TAP::Formatter::Console::ParallelSession TAP::Formatter::Console::Session TAP::Formatter::File TAP::Formatter::File::Session TAP::Formatter::Session TAP::Harness TAP::Object TAP::Parser TAP::Parser::Aggregator TAP::Parser::Grammar TAP::Parser::Iterator TAP::Parser::Iterator::Array TAP::Parser::Iterator::Process TAP::Parser::Iterator::Stream TAP::Parser::IteratorFactory TAP::Parser::Multiplexer TAP::Parser::Result TAP::Parser::Result::Bailout TAP::Parser::Result::Comment TAP::Parser::Result::Plan TAP::Parser::Result::Pragma TAP::Parser::Result::Test TAP::Parser::Result::Unknown TAP::Parser::Result::Version TAP::Parser::Result::YAML TAP::Parser::ResultFactory TAP::Parser::Scheduler TAP::Parser::Scheduler::Job TAP::Parser::Scheduler::Spinner TAP::Parser::Source TAP::Parser::SourceHandler TAP::Parser::SourceHandler::Executable TAP::Parser::SourceHandler::File TAP::Parser::SourceHandler::Handle TAP::Parser::SourceHandler::Perl TAP::Parser::SourceHandler::RawTAP TAP::Parser::Utils TAP::Parser::YAMLish::Reader TAP::Parser::YAMLish::Writer Test Test::Builder Test::Builder::Module Test::Builder::Tester Test::Builder::Tester::Color Test::Harness Test::More Test::Simple blib diagnostics)
+    ],
+    "perl-unicore" => [qw( Unicode::UCD charnames )],
+    "perl-threads" =>
+      [qw( Thread Thread::Queue Thread::Semaphore threads threads::shared )],
+    "perl-DBM" => [
+        qw( AnyDBM_File DBM_Filter DBM_Filter::compress DBM_Filter::encode DBM_Filter::int32 DBM_Filter::null DBM_Filter::utf8 DB_File GDBM_File NDBM_File SDBM_File )
+    ],
+    "perl-libwww" => [
+        qw(LWP LWP::Authen::Basic LWP::Authen::Digest LWP::Authen::Ntlm LWP::ConnCache LWP::Debug LWP::DebugFile LWP::MemberMixin LWP::Protocol LWP::Protocol::GHTTP LWP::Protocol::cpan LWP::Protocol::data LWP::Protocol::file LWP::Protocol::ftp LWP::Protocol::gopher LWP::Protocol::http LWP::Protocol::loopback LWP::Protocol::mailto LWP::Protocol::nntp LWP::Protocol::nogo LWP::RobotUA LWP::Simple LWP::UserAgent)
+    ],
+    "perldoc" => [qw(Pod::Perldoc)],
+
+);
+
+my %perl_module_match = ();
+
+sub run {
+    my $self = bless {}, shift();
+
+    unless (%perl_module_match) {
+        for my $key ( keys %perl_provides ) {
+            for my $m ( @{ $perl_provides{$key} } ) {
+                $perl_module_match{$m} = $key;
+            }
+        }
+    }
+    $self->load_meta;
+    $self->prepare_data;
+    $self->scan_manifest;
+    $self->build_spec;
+}
+
+sub load_meta {
+    my $self = shift;
+
+    my @meta = qw( META.yml MYMETA.yml );
+    my $file = undef;
+
+    for (@meta) {
+        next unless ( -f $_ );
+        $file = $_;
+        last;
+    }
+    die "can't find any META file\n" unless defined $file;
+
+    $self->{meta} = YAML::LoadFile($file) or die "$!";
+}
+
+sub filter_names {
+    my ( $self, %req ) = @_;
+    my %list;
+    my @deps;
+    while ( my ( $module, $version ) = each %req ) {
+        my $name =
+          ( exists $perl_module_match{$module} )
+          ? $perl_module_match{$module}
+          : 'perl(' . join( '/', split /::/, $module ) . '.pm)';
+
+        next if ( exists $list{$name} );
+        $list{$name} = 1;
+
+        #if (exists $perl_provides{$name} || $version == 0) {
+        push @deps, $name;
+
+        #} else {
+        #push @deps, $name . " (>= $version)";
+        #}
+    }
+    return join( " ", @deps );
+}
+
+sub scan_manifest {
+    my $self  = shift;
+    my $nolib = 1;
+    my @doc_files =
+      qw(readme readme.md changes changelog license todo hacking authors news);
+
+    die "can't find MANIFEST file\n"
+      unless ( -f 'MANIFEST' );
+
+    open my $fh, '<', 'MANIFEST' or die $!;
+    while (<$fh>) {
+        chomp;
+        if ( /\.xs$/ && $self->{data}->{arch} ) {
+            $self->{data}->{arch} = '';
+        }
+        foreach my $doc (@doc_files) {
+            if (/^$doc$/i) {
+                unless ( $self->{data}->{doc} ) {
+                    $self->{data}->{doc} = "%doc";
+                }
+                $self->{data}->{doc} .= " $_";
+                last;
+            }
+        }
+        if (/^bin\/(.+)$/) {
+            $self->{data}->{files} .= "%_bindir/$1\n";
+        }
+        if (/^lib\//) {
+            $nolib = 0;
+        }
+    }
+    close $fh;
+
+    my $path = $self->{data}->{dist};
+    $path =~ s/-/\//g;
+
+    if ( $self->{data}->{arch} ) {
+        $self->{data}->{files} .= "%perl_vendor_privlib/$path*" unless ($nolib);
+    }
+    else {
+        $self->{data}->{files} .=
+          "%perl_vendor_autolib/$path*\n" . "%perl_vendor_archlib/$path*";
+    }
+
+}
+
+sub prepare_data {
+    my $self = shift;
+
+    my $name = $self->{meta}->{name} or die "name of dist not found!\n";
+    my $module = $name;
+    $module =~ s/-/::/g;
+
+    # set C locale for strftime
+    setlocale( LC_ALL, "C" );
+
+    $self->{data} = {
+        dist    => $name,
+        name    => 'perl-' . $name,
+        version => $self->{meta}->{version},
+        summary => $self->{meta}->{abstract} || $module . ' perl module',
+        license => (
+            !!$self->{meta}->{license} && $self->{meta}->{license} ne "unknown"
+          ) ? $self->{meta}->{license} : "Perl",
+        deps => $self->filter_names(
+            %{ $self->{meta}->{build_requires} },
+            %{ $self->{meta}->{requires} },
+            %{ $self->{meta}->{configure_requires} },
+            %{ $self->{meta}->{test_requires} },
+        ),
+        "arch" => "\nBuildArch: noarch",
+        "date" => strftime( "%a %b %d %Y", localtime ),
+    };
+}
+
+sub build_spec {
+    my $self = shift;
+    $self->{spec} = $spec_tmpl;
+    for my $key ( keys $self->{data} ) {
+        $self->{spec} =~ s/\@$key\@/$self->{data}->{$key}/g;
+    }
+    open my $fh, '>', 'perl-' . $self->{data}->{dist} . '.spec' or die $!;
+    print $fh $self->{spec};
+    close $fh;
+}
+
+App::meta2spec->run();
